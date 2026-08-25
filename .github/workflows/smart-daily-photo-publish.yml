@@ -79,6 +79,7 @@ jobs:
 
       - name: Save successful topic history
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add history/
@@ -86,5 +87,6 @@ jobs:
             echo 'No history changes to commit'
           else
             git commit -m 'Update Smart Daily photo history'
-            git push
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin HEAD:"$GITHUB_REF_NAME"
           fi
