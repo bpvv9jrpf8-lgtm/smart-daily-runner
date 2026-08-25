@@ -70,7 +70,11 @@ jobs:
           CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
           BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
           BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
-        run: python private-src/scripts/public_runner_photo.py
+        run: |
+          set -euo pipefail
+          CLEAN_BUFFER_TOKEN="$(printf '%s' "$BUFFER_API_TOKEN" | sed 's/^BUFFER_API_TOKEN=//' | sed 's/^Bearer[[:space:]]*//' | tr -d '\r\n\t ')"
+          export BUFFER_API_TOKEN="$CLEAN_BUFFER_TOKEN"
+          python private-src/scripts/public_runner_photo.py
 
       - name: Save topic history in public runner
         run: |
