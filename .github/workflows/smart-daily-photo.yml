@@ -100,7 +100,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: smart-daily-photo-package-${{ github.run_id }}
-          path: .
+          path: smart-photo
 
       - name: Validate publish-only secrets
         env:
