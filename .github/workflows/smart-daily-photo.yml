@@ -10,9 +10,7 @@ on:
 
 permissions:
   contents: write
-
-actions:
-  read
+  actions: read
 
 concurrency:
   group: smart-daily-public-photo-runner
