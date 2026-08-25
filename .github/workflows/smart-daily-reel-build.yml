@@ -70,15 +70,38 @@ jobs:
           pip install cloudinary
           mkdir -p smart-reel
 
+      - name: Build clean stereo music bed
+        run: |
+          python - <<'PY'
+          import math, wave, struct
+          sr=44100; dur=20.0; n=int(sr*dur)
+          progression=[(261.63,329.63,392.00),(196.00,246.94,293.66),(220.00,261.63,329.63),(174.61,220.00,261.63)]
+          melody=[659.25,587.33,523.25,587.33,659.25,783.99,698.46,587.33]
+          with wave.open('smart-reel/bgm.wav','w') as wf:
+              wf.setnchannels(2); wf.setsampwidth(2); wf.setframerate(sr)
+              frames=bytearray()
+              for i in range(n):
+                  t=i/sr; chord=progression[int(t//5)%4]; beat=t%0.5
+                  env=math.exp(-5.8*beat)
+                  pad=0.03*sum(math.sin(2*math.pi*f*t) for f in chord)/3.0
+                  note=melody[int(t//0.5)%len(melody)]
+                  pluck=0.05*math.sin(2*math.pi*note*t)*env
+                  bass=0.02*math.sin(2*math.pi*(chord[0]/2)*t)
+                  fade=min(1.0,t/1.0,(dur-t)/2.0 if t>dur-2 else 1.0)
+                  s=max(-0.20,min(0.20,(pad+pluck+bass)*fade))
+                  v=int(s*32767); frames += struct.pack('<hh',v,v)
+              wf.writeframes(frames)
+          PY
+
       - name: Build animated photo reel with music
         run: |
           set -euo pipefail
           ffmpeg -y \
             -loop 1 -i smart-photo/smart-daily-photo.jpg \
             -loop 1 -i smart-photo/smart-daily-photo.jpg \
-            -f lavfi -i "aevalsrc=0.08*sin(2*PI*220*t)+0.05*sin(2*PI*277.18*t)+0.04*sin(2*PI*329.63*t)+0.025*sin(2*PI*440*t):s=44100:d=20" \
-            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28,eq=brightness=-0.20[bg];[1:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,zoompan=z='min(zoom+0.00007,1.035)':d=600:s=1080x1920:fps=30,fade=t=in:st=0:d=0.5,fade=t=out:st=19:d=1[v];[2:a]lowpass=f=2200,highpass=f=90,volume=0.45,afade=t=in:st=0:d=1,afade=t=out:st=18:d=2[a]" \
-            -map '[v]' -map '[a]' -t 20 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart smart-reel/smart-daily-reel.mp4
+            -i smart-reel/bgm.wav \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28,eq=brightness=-0.20[bg];[1:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,zoompan=z='min(zoom+0.00007,1.035)':d=600:s=1080x1920:fps=30,fade=t=in:st=0:d=0.5,fade=t=out:st=19:d=1[v];[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo,lowpass=f=5000,highpass=f=70,volume=0.65,loudnorm=I=-24:TP=-3:LRA=5[a]" \
+            -map '[v]' -map '[a]' -t 20 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 -b:a 128k -movflags +faststart smart-reel/smart-daily-reel.mp4
 
       - name: Upload saved reel and make publish package
         env:
@@ -108,7 +131,7 @@ jobs:
               'source_log':src['source_log'],
               'reel_url':up['secure_url'],
               'source_photo_run_id':os.environ['SOURCE_RUN_ID'],
-              'template':'SMART_DAILY_PHOTO_REEL_V2_MUSIC'
+              'template':'SMART_DAILY_PHOTO_REEL_V3_STEREO_MUSIC'
           }
           Path('smart-reel/publish.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
           PY
