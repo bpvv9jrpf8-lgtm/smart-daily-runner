@@ -1,0 +1,90 @@
+name: Smart Daily Photo Publish Only
+
+on:
+  workflow_run:
+    workflows: ['Smart Daily Photo Generate']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Generation workflow run ID to reuse'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: smart-daily-photo-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-photo:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout public runner
+        uses: actions/checkout@v4
+
+      - name: Checkout private Smart Daily source
+        uses: actions/checkout@v4
+        with:
+          repository: bpvv9jrpf8-lgtm/smart-daily-automation
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: private-src
+          persist-credentials: false
+
+      - name: Resolve source generation run
+        id: source
+        shell: bash
+        env:
+          AUTO_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = 'workflow_run' ]; then
+            RUN_ID="$AUTO_RUN_ID"
+          else
+            RUN_ID="$MANUAL_RUN_ID"
+          fi
+          [ -n "$RUN_ID" ] || { echo 'Generation run ID missing'; exit 1; }
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download saved package from generation run
+        uses: actions/download-artifact@v4
+        with:
+          name: smart-daily-photo-package-${{ steps.source.outputs.run_id }}
+          path: smart-photo
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+
+      - name: Validate publish-only secrets
+        env:
+          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          [ -n "$BUFFER_API_TOKEN" ] || { echo 'BUFFER_API_TOKEN missing'; exit 1; }
+          [ -n "$BUFFER_CHANNEL_ID" ] || { echo 'BUFFER_CHANNEL_ID missing'; exit 1; }
+
+      - name: Publish saved photo without regeneration
+        env:
+          RUNNER_ROOT: ${{ github.workspace }}
+          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+        run: python private-src/scripts/public_publish_photo.py
+
+      - name: Save successful topic history
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add history/
+          if git diff --cached --quiet; then
+            echo 'No history changes to commit'
+          else
+            git commit -m 'Update Smart Daily photo history'
+            git push
+          fi
