@@ -1,0 +1,123 @@
+name: Smart Daily Reel Build From Photo
+
+on:
+  workflow_run:
+    workflows: ['Smart Daily Photo Generate']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Successful photo generation run ID to reuse'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: smart-daily-reel-build
+  cancel-in-progress: false
+
+jobs:
+  build-reel:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout public runner
+        uses: actions/checkout@v4
+
+      - name: Resolve source photo run
+        id: source
+        shell: bash
+        env:
+          AUTO_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = 'workflow_run' ]; then
+            RUN_ID="$AUTO_RUN_ID"
+          else
+            RUN_ID="$MANUAL_RUN_ID"
+          fi
+          [ -n "$RUN_ID" ] || { echo 'Source photo run ID missing'; exit 1; }
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download saved photo package
+        uses: actions/download-artifact@v4
+        with:
+          name: smart-daily-photo-package-${{ steps.source.outputs.run_id }}
+          path: smart-photo
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+
+      - name: Validate reel build secret
+        env:
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+        run: |
+          set -euo pipefail
+          [ -n "$CLOUDINARY_URL" ] || { echo 'CLOUDINARY_URL missing'; exit 1; }
+          test -s smart-photo/smart-daily-photo.jpg
+          test -s smart-photo/publish.json
+
+      - name: Install free reel tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          python -m pip install --upgrade pip
+          pip install cloudinary
+          mkdir -p smart-reel
+
+      - name: Build animated photo reel
+        run: |
+          set -euo pipefail
+          ffmpeg -y \
+            -loop 1 -i smart-photo/smart-daily-photo.jpg \
+            -loop 1 -i smart-photo/smart-daily-photo.jpg \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28,eq=brightness=-0.20[bg];[1:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,zoompan=z='min(zoom+0.00007,1.035)':d=600:s=1080x1920:fps=30,fade=t=in:st=0:d=0.5,fade=t=out:st=19:d=1[v]" \
+            -map '[v]' -t 20 -an -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -movflags +faststart smart-reel/smart-daily-reel.mp4
+
+      - name: Upload saved reel and make publish package
+        env:
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw=os.environ['CLOUDINARY_URL'].strip().strip('"').strip("'")
+          if raw.startswith('CLOUDINARY_URL='):
+              raw=raw.split('=',1)[1].strip().strip('"').strip("'")
+          if not raw.startswith('cloudinary://'):
+              raise SystemExit('Invalid CLOUDINARY_URL')
+          body=raw[len('cloudinary://'):]
+          credentials,cloud_name=body.rsplit('@',1)
+          api_key,api_secret=credentials.split(':',1)
+          cloud_name=cloud_name.split('?',1)[0].strip('/')
+          os.environ.pop('CLOUDINARY_URL',None)
+          import cloudinary, cloudinary.uploader
+          cloudinary.config(cloud_name=cloud_name,api_key=api_key,api_secret=api_secret,secure=True)
+          up=cloudinary.uploader.upload('smart-reel/smart-daily-reel.mp4',resource_type='video',folder='smart-daily-reels',overwrite=False)
+          src=json.loads(Path('smart-photo/publish.json').read_text())
+          out={
+              'topic':src['topic'],
+              'caption':src['caption'],
+              'source_log':src['source_log'],
+              'reel_url':up['secure_url'],
+              'source_photo_run_id':os.environ['SOURCE_RUN_ID'],
+              'template':'SMART_DAILY_PHOTO_REEL_V1'
+          }
+          Path('smart-reel/publish.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Save reel artifact for publish-only retry
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-daily-reel-package-${{ github.run_id }}
+          path: |
+            smart-reel/publish.json
+            smart-reel/smart-daily-reel.mp4
+          if-no-files-found: error
+          retention-days: 7
