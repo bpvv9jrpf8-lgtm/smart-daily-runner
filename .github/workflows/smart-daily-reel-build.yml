@@ -70,14 +70,15 @@ jobs:
           pip install cloudinary
           mkdir -p smart-reel
 
-      - name: Build animated photo reel
+      - name: Build animated photo reel with music
         run: |
           set -euo pipefail
           ffmpeg -y \
             -loop 1 -i smart-photo/smart-daily-photo.jpg \
             -loop 1 -i smart-photo/smart-daily-photo.jpg \
-            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28,eq=brightness=-0.20[bg];[1:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,zoompan=z='min(zoom+0.00007,1.035)':d=600:s=1080x1920:fps=30,fade=t=in:st=0:d=0.5,fade=t=out:st=19:d=1[v]" \
-            -map '[v]' -t 20 -an -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -movflags +faststart smart-reel/smart-daily-reel.mp4
+            -f lavfi -i "aevalsrc=0.08*sin(2*PI*220*t)+0.05*sin(2*PI*277.18*t)+0.04*sin(2*PI*329.63*t)+0.025*sin(2*PI*440*t):s=44100:d=20" \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28,eq=brightness=-0.20[bg];[1:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,zoompan=z='min(zoom+0.00007,1.035)':d=600:s=1080x1920:fps=30,fade=t=in:st=0:d=0.5,fade=t=out:st=19:d=1[v];[2:a]lowpass=f=2200,highpass=f=90,volume=0.45,afade=t=in:st=0:d=1,afade=t=out:st=18:d=2[a]" \
+            -map '[v]' -map '[a]' -t 20 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart smart-reel/smart-daily-reel.mp4
 
       - name: Upload saved reel and make publish package
         env:
@@ -107,7 +108,7 @@ jobs:
               'source_log':src['source_log'],
               'reel_url':up['secure_url'],
               'source_photo_run_id':os.environ['SOURCE_RUN_ID'],
-              'template':'SMART_DAILY_PHOTO_REEL_V1'
+              'template':'SMART_DAILY_PHOTO_REEL_V2_MUSIC'
           }
           Path('smart-reel/publish.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
           PY
