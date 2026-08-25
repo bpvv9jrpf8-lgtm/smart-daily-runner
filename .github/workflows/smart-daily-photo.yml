@@ -1,19 +1,16 @@
-name: Smart Daily Public Photo Runner
+name: Smart Daily Photo Generate
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/smart-daily-photo.yml'
   schedule:
     - cron: '40 0,4,8,12,16,20 * * *'
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
+  actions: write
 
 concurrency:
-  group: smart-daily-public-photo-runner
+  group: smart-daily-photo-generate
   cancel-in-progress: false
 
 jobs:
@@ -79,53 +76,3 @@ jobs:
             smart-photo/smart-daily-photo.jpg
           if-no-files-found: error
           retention-days: 7
-
-  publish-photo:
-    needs: generate-photo
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout public runner
-        uses: actions/checkout@v4
-
-      - name: Checkout private Smart Daily source
-        uses: actions/checkout@v4
-        with:
-          repository: bpvv9jrpf8-lgtm/smart-daily-automation
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          path: private-src
-          persist-credentials: false
-
-      - name: Download saved publish package
-        uses: actions/download-artifact@v4
-        with:
-          name: smart-daily-photo-package-${{ github.run_id }}
-          path: smart-photo
-
-      - name: Validate publish-only secrets
-        env:
-          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
-          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
-        run: |
-          set -euo pipefail
-          [ -n "$BUFFER_API_TOKEN" ] || { echo 'BUFFER_API_TOKEN missing'; exit 1; }
-          [ -n "$BUFFER_CHANNEL_ID" ] || { echo 'BUFFER_CHANNEL_ID missing'; exit 1; }
-
-      - name: Publish saved photo without regeneration
-        env:
-          RUNNER_ROOT: ${{ github.workspace }}
-          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
-          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
-        run: python private-src/scripts/public_publish_photo.py
-
-      - name: Save successful topic history
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add history/
-          if git diff --cached --quiet; then
-            echo 'No history changes to commit'
-          else
-            git commit -m 'Update Smart Daily photo history'
-            git push
-          fi
