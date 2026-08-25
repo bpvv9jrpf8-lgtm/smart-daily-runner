@@ -11,12 +11,15 @@ on:
 permissions:
   contents: write
 
+actions:
+  read
+
 concurrency:
   group: smart-daily-public-photo-runner
   cancel-in-progress: false
 
 jobs:
-  publish-photo:
+  generate-photo:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -31,22 +34,20 @@ jobs:
           path: private-src
           persist-credentials: false
 
-      - name: Validate secrets
+      - name: Validate generation secrets
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
-          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
-          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
           PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          for name in OPENAI_API_KEY PEXELS_API_KEY PIXABAY_API_KEY CLOUDINARY_URL BUFFER_API_TOKEN BUFFER_CHANNEL_ID PRIVATE_REPO_TOKEN; do
+          for name in OPENAI_API_KEY PEXELS_API_KEY PIXABAY_API_KEY CLOUDINARY_URL PRIVATE_REPO_TOKEN; do
             [ -n "${!name:-}" ] || { echo "$name missing"; exit 1; }
           done
 
-      - name: Install runner dependencies
+      - name: Install generation dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pillow requests cloudinary
@@ -61,22 +62,65 @@ jobs:
           if [ ! -s history/used-buffer-topics.txt ] && [ -f private-src/used-buffer-topics.txt ]; then cp private-src/used-buffer-topics.txt history/used-buffer-topics.txt; fi
           if [ ! -s history/photo-source-log.txt ] && [ -f private-src/photo-source-log.txt ]; then cp private-src/photo-source-log.txt history/photo-source-log.txt; fi
 
-      - name: Generate and publish Smart Daily photo
+      - name: Generate Smart Daily photo once
         env:
           RUNNER_ROOT: ${{ github.workspace }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+        run: python private-src/scripts/public_runner_photo.py
+
+      - name: Save generated publish package
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-daily-photo-package-${{ github.run_id }}
+          path: |
+            smart-photo/publish.json
+            smart-photo/package.json
+            smart-photo/smart-daily-photo.jpg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-photo:
+    needs: generate-photo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout public runner
+        uses: actions/checkout@v4
+
+      - name: Checkout private Smart Daily source
+        uses: actions/checkout@v4
+        with:
+          repository: bpvv9jrpf8-lgtm/smart-daily-automation
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: private-src
+          persist-credentials: false
+
+      - name: Download saved publish package
+        uses: actions/download-artifact@v4
+        with:
+          name: smart-daily-photo-package-${{ github.run_id }}
+          path: .
+
+      - name: Validate publish-only secrets
+        env:
           BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
           BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
         run: |
           set -euo pipefail
-          CLEAN_BUFFER_TOKEN="$(printf '%s' "$BUFFER_API_TOKEN" | sed 's/^BUFFER_API_TOKEN=//' | sed 's/^Bearer[[:space:]]*//' | tr -d '\r\n\t ')"
-          export BUFFER_API_TOKEN="$CLEAN_BUFFER_TOKEN"
-          python private-src/scripts/public_runner_photo.py
+          [ -n "$BUFFER_API_TOKEN" ] || { echo 'BUFFER_API_TOKEN missing'; exit 1; }
+          [ -n "$BUFFER_CHANNEL_ID" ] || { echo 'BUFFER_CHANNEL_ID missing'; exit 1; }
 
-      - name: Save topic history in public runner
+      - name: Publish saved photo without regeneration
+        env:
+          RUNNER_ROOT: ${{ github.workspace }}
+          BUFFER_API_TOKEN: ${{ secrets.BUFFER_API_TOKEN }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+        run: python private-src/scripts/public_publish_photo.py
+
+      - name: Save successful topic history
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
