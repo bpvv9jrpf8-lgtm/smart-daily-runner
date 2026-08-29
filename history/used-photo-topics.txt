@@ -11,3 +11,4 @@ Octopus taste-by-touch sensing
 How Trees Move Water
 Why Rivers Meander
 How Noise-Canceling Headphones Work
+How QR Codes Store Information
